@@ -12,7 +12,15 @@
 #include <string>
 #include <stdlib.h>
 #include <string.h>
+#include "proc_kernel.h"
 using namespace std;
+
+/* ------------------------------------------------------------------------- *
+ * Define Constants                                                          *
+ * ------------------------------------------------------------------------- */
+
+#define MIN_HESS 800
+#define RATIO    0.6
 
 /* ------------------------------------------------------------------------- *
  * Define Types                                                              *
@@ -26,6 +34,10 @@ typedef struct ARG_INFO
 	int pos_x;               // x coordinate position in mm
 	int pos_y;               // y coordinate position in mm
 	int target_dim;          // the target dimension in mm
+	float fx;                // camera param, x focal length
+	float fy;                // camera param, y focal length
+	float px;                // camera param, principle x coord
+	float py;                // camera param, principle y coord
 } arg_info_t;
 
 /* ------------------------------------------------------------------------- *
@@ -56,6 +68,10 @@ int main(int argc, char **argv)
 	arg_info.target_dim       = 300;
 	arg_info.pos_x            = 0;
 	arg_info.pos_y            = 0;
+	arg_info.fx               = 1.0;
+	arg_info.fy               = 1.0;
+	arg_info.px               = 0;
+	arg_info.py               = 0;
 
 	ParseArguments(argc,argv,arg_info);
 
@@ -64,8 +80,43 @@ int main(int argc, char **argv)
 	cout << "output_json_path = " << arg_info.output_json_path << endl;
 	cout << "target_img_path  = " << arg_info.target_img_path << endl;
 	cout << "target_dim       = " << arg_info.target_dim << endl;
-	cout << "pos_x            = " << arg_info.pos_x << endl;
-	cout << "pos_y            = " << arg_info.pos_y << endl;
+	cout << "x-axis position  = " << arg_info.pos_x << endl;
+	cout << "y-axis position  = " << arg_info.pos_y << endl;
+	cout << "x-axis focal len = " << arg_info.fx << endl;
+	cout << "y-axis focal len = " << arg_info.fy << endl;
+	cout << "principle x-axis = " << arg_info.px << endl;
+	cout << "principle y-axis = " << arg_info.py << endl;
+
+	// ------------------------------------------------------------------------
+	// initialize capture device
+
+	VideoCapture cap(0);
+	if(!cap.isOpened())  // check if we succeeded
+	{
+		cout << "Error: Failed to initialize video capture device." << endl;
+		exit(1);
+	}
+
+	// ------------------------------------------------------------------------
+	// initialize processing kernel
+
+	// set camera parameters
+	cam_params_t cparams;
+	cparams.f_x = arg_info.fx;
+	cparams.f_y = arg_info.fy;
+	cparams.p_x = arg_info.px;
+	cparams.p_y = arg_info.py;
+
+	// read target image
+	Mat targetImg = imread(arg_info.target_img_path, CV_LOAD_IMAGE_GRAYSCALE);
+	if(targetImg.empty())
+	{
+		cout << "Error: Unable to load target image." << endl;
+		exit(1);
+	}
+
+	// create an initialze processing kernel
+	Kernel k(targetImg, cparams, MIN_HESS, RATIO);
 
 	return 0;
 }
@@ -135,7 +186,7 @@ void ParseArguments(int argc, char **argv, arg_info_t &arg_info)
 			arg_info.target_dim = atoi(argv[i]);
 		}
 
-		// x coordinate
+		// x pos coordinate
 		else if(!strcmp("-x", argv[i]))
 		{
 			if(++i == argc)
@@ -147,7 +198,7 @@ void ParseArguments(int argc, char **argv, arg_info_t &arg_info)
 			arg_info.pos_x = atoi(argv[i]);
 		}
 
-		// y coordinate
+		// y pos coordinate
 		else if(!strcmp("-y", argv[i]))
 		{
 			if(++i == argc)
@@ -158,6 +209,55 @@ void ParseArguments(int argc, char **argv, arg_info_t &arg_info)
 
 			arg_info.pos_y = atoi(argv[i]);
 		}
+
+		// focal x
+		else if(!strcmp("-fx", argv[i]))
+		{
+			if(++i == argc)
+			{
+				cout << "Error: '-fx' argument specified without value." << endl;
+				exit(1);
+			}
+
+			arg_info.fx = atof(argv[i]);
+		}
+
+		// focal y
+		else if(!strcmp("-fy", argv[i]))
+		{
+			if(++i == argc)
+			{
+				cout << "Error: '-fy' argument specified without value." << endl;
+				exit(1);
+			}
+
+			arg_info.fy = atof(argv[i]);
+		}
+
+		// principle x coord
+		else if(!strcmp("-px", argv[i]))
+		{
+			if(++i == argc)
+			{
+				cout << "Error: '-px' argument specified without value." << endl;
+				exit(1);
+			}
+
+			arg_info.px = atof(argv[i]);
+		}
+
+		// principle y coord
+		else if(!strcmp("-py", argv[i]))
+		{
+			if(++i == argc)
+			{
+				cout << "Error: '-py' argument specified without value." << endl;
+				exit(1);
+			}
+
+			arg_info.py = atof(argv[i]);
+		}
+
 
 		i++;
 	}

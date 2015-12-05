@@ -22,6 +22,7 @@
 #include "opencv2/nonfree/gpu.hpp"
 #include "opencv2/nonfree/nonfree.hpp"
 #include "opencv2/calib3d/calib3d.hpp"
+#include "opencv2/flann/flann.hpp"
 
 #include "proc_kernel.h"
 
@@ -33,6 +34,7 @@ using namespace cv::gpu;
  * Declare Internal Functions                                                *
  * ------------------------------------------------------------------------- */
 
+double homographyToHeading(const Mat&);
 float angleBetweenRays(const Vec3f &a, const Vec3f &b);
 void transPixelToCamRay(const cam_params_t &params, const Point2f &pix, Vec3f &ray);
 Point3f transPixelToCamPoint(const cam_params_t &params, const Point2f &pix, float z);
@@ -93,6 +95,12 @@ Kernel::Kernel(const Mat &objImg,
 	(*m_surfGPU)(procObjImg, GpuMat(), m_objKpGPU, m_objDescGPU);
 
 #endif
+
+	m_objImgVert.resize(4);
+	m_objImgVert[0] = cvPoint(0,0);
+	m_objImgVert[1] = cvPoint(objImg.cols, 0);
+	m_objImgVert[2] = cvPoint(objImg.cols, objImg.rows);
+	m_objImgVert[3] = cvPoint(0, objImg.rows);
 }
 
 /**
@@ -118,6 +126,172 @@ Kernel::~Kernel()
 	delete m_surfGPU;
 
 #endif
+}
+
+/**
+ * @brief Process the scene image.
+ *
+ * Upon successful execution of this method, scene features will be placed in
+ * members 'm_sceneKpts' and 'm_sceneDesc' or 'm_sceneKpGPU' and
+ * 'm_sceneDescGPU' in the case of GPU acceleration.
+ */
+
+void Kernel::ProcessSceneImage(const Mat &img)
+{
+	Mat imgBw, imgHist;
+
+	cvtColor(img, imgBw, CV_BGR2GRAY);
+	equalizeHist(imgBw, imgHist);
+
+#ifndef ENABLE_GPU
+
+	m_detector->detect(imgHist, m_sceneKpnts);
+	m_extractor->compute(imgHist, m_sceneKpnts, m_sceneDesc);
+
+#else
+
+	(*m_surfGPU)(imgHist, GpuMat(), m_sceneKpGPU, m_sceneDescGPU);
+
+#endif
+}
+
+/**
+ * @brief Calculate the homography matrix.
+ *
+ * The homography matrix will be placed in member 'm_hm' upon successful
+ * execution of this method.
+ *
+ * @return
+ * True if a homography matrix was successfully executed. False otherwise.
+ */
+
+bool Kernel::CalculateHomography()
+{
+	vector<Point2f> objKeypointsHg;
+	vector<Point2f> sceneKeypointsHg;
+
+	cout << "ComputeHomography()" << endl;
+
+	if(m_matches.size() < 4)
+	{
+		cout << "Warning: Not enough matches found to calculate homography: match count = "
+		     << m_matches.size()
+		     << endl;
+
+		return false;
+	}
+
+	else
+		cout << "Sufficient matches to compute homography found." << endl;
+
+	for(int i = 0; i < m_matches.size(); i++)
+	{
+		objKeypointsHg.push_back(m_objKpnts[m_matches[i].queryIdx].pt);
+		sceneKeypointsHg.push_back(m_sceneKpnts[m_matches[i].trainIdx].pt);
+	}
+
+	cout << "findHomography()...";
+	m_hm = findHomography(objKeypointsHg, sceneKeypointsHg, CV_RANSAC );
+	cout << "done" << endl;
+
+	if(m_hm.empty())
+	{
+		cout << "Warning: An empty homography matrix was returned." << endl;
+		return false;
+	}
+
+	// check if homography matrix is valid
+	double det = determinant(m_hm(Rect(0,0,2,2)));
+	cout << "det = " << det << endl;
+	if( (det <= 0.01 ) || (det > 10.0) )
+	{
+		cout << "Warning: Homography matrix isn't valid." << endl;
+		//return false;
+	}
+
+	cout << "perspectiveTransform()...";
+	perspectiveTransform(m_objImgVert, m_homVert, m_hm);
+	cout << "done" << endl;
+
+	return true;
+}
+
+/**
+ * @brief Find feature matches between object and scene images.
+ *
+ * Upon successful execution of this method, a list of feature matches will be
+ * stored in member 'm_matches'.
+ *
+ * @return True of a list of matches was successful found. False otherwise.
+ */
+
+bool Kernel::MatchFeatures()
+{
+	vector< vector<DMatch> > init_matches;
+
+	cout << "MatchFeatures()" << endl;
+
+#ifndef ENABLE_GPU
+
+	FlannBasedMatcher flann_matcher;
+
+	if(m_objDesc.empty() || m_sceneDesc.empty())
+	{
+		cout << "Warning: Empty feature set." << endl;
+		return false;
+	}
+
+	flann_matcher.knnMatch(m_objDesc, m_sceneDesc, init_matches, 2);
+
+#else
+
+	BFMatcher_GPU matcher(NORM_L2);
+
+	if(m_objDescGPU.empty() || m_sceneDescGPU.empty())
+	{
+		cout << "Warning: Empty feature set." << endl;
+		return false;
+	}
+
+	matcher.knnMatch(m_objDescGPU, m_sceneDescGPU, init_matches, 2);
+
+#endif
+
+	m_matches.clear();
+	for (int i = 0; i < init_matches.size(); i++)
+	{
+		if(init_matches[i][0].distance <= (m_ratio*init_matches[i][1].distance))
+		{
+			m_matches.push_back(init_matches[i][0]);
+		}
+	}
+
+	return true;
+}
+
+
+/**
+ * @param frame input frame from camera
+ *
+ * @return True if the frame was successfully processed. False otherwise.
+ */
+
+bool Kernel::Input(const Mat &frame)
+{
+	ProcessSceneImage(frame); // extract features from frame
+
+	if(!MatchFeatures())
+	{
+		cout << "Warning: Unable to match features." << endl;
+		return false;
+	}
+
+	if(!CalculateHomography())
+	{
+		cout << "Warning: Unable to calculate homography." << endl;
+		return false;
+	}
+	return true;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -178,4 +352,37 @@ Point3f transPixelToCamPoint(const cam_params_t &params, const Point2f &pix, flo
 	Vec3f ray;
 	transPixelToCamRay(params,pix, ray);
 	return Point3f(ray[0]*z,ray[1]*z,z);
+}
+
+/**
+ * @brief Convert homography matrix to heading.
+ *
+ * @param hm homography matrix
+ */
+
+double homographyToHeading(const Mat &hm)
+{
+	double mag, theda;
+	Point2d vec, unit;
+	vector<Point2d> in_vert(2), out_vert;
+	in_vert[0].x = 0;
+	in_vert[0].y = 0;
+	in_vert[1].x = 0;
+	in_vert[1].y = 1;
+
+	perspectiveTransform(in_vert, out_vert, hm);
+
+	vec = out_vert[0] - out_vert[1];
+
+	mag = sqrt(vec.x*vec.x + vec.y*vec.y);
+
+	unit.x = vec.x / mag;
+	unit.y = vec.y / mag;
+
+	theda = 180*acos(unit.y)/3.1415;
+
+	if(unit.x < 0)
+		theda = -theda;
+
+	return theda;
 }

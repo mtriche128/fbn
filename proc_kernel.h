@@ -80,21 +80,32 @@ public:
 	void Output(Mat&,nav_data_t&);
 
 private:
-	cam_params_t m_camParams;    // stores camera parameters
-	nav_data_t m_navData;        // stores current navigation data
-	vector<Point2f> m_homVert;   // image vertices post-homography
-	vector<DMatch> m_matches;    // feature matches
-	vector<KeyPoint> m_objKpnts; // object keypoints
-	Mat m_objDesc;               // object descriptors
-	float m_ratio;               // matching ratio
+
+	void ProcessSceneImage(const Mat&);
+	bool CalculateHomography();
+	bool MatchFeatures();
+
+	cam_params_t m_camParams;      // stores camera parameters
+	nav_data_t m_navData;          // stores current navigation data
+	vector<Point2f> m_objImgVert;  // object image vertices
+	vector<Point2f> m_homVert;     // image vertices post-homography
+	vector<DMatch> m_matches;      // feature matches
+	vector<KeyPoint> m_objKpnts;   // object keypoints
+	vector<KeyPoint> m_sceneKpnts; // scene keypoints
+	Mat m_objDesc;                 // object descriptors
+	Mat m_sceneDesc;               // scene descriptors
+	Mat m_hm;                      // homography matrix
+	float m_ratio;                 // matching ratio
 
 #ifndef ENABLE_GPU
 	SurfFeatureDetector *m_detector;      // extracts keypoints
 	SurfDescriptorExtractor *m_extractor; // extracts descriptors
 #else
-	SURF_GPU *m_surfGPU;  // feature extractor
-	GpuMat m_objDescGPU;  // stores object descriptors on GPU
-	GpuMat m_objKpGPU;    // stores keypoint descriptors on GPU
+	SURF_GPU *m_surfGPU;    // feature extractor
+	GpuMat m_objDescGPU;    // stores object descriptors on GPU
+	GpuMat m_sceneDescGPU;  // stores scene descriptors on GPU
+	GpuMat m_objKpGPU;      // stores object keypoint descriptors on GPU
+	GpuMat m_sceneKpGPU;    // stores scene keypoint descriptors on GPU
 #endif
 
 };
