@@ -149,6 +149,7 @@ int main(int argc, char **argv)
 		}
 
 		fps = (float)CLOCKS_PER_SEC / (float)(clock() - tfps);
+		tfps = clock();
 
 		imshow("output", frame);
 
