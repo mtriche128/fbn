@@ -306,7 +306,11 @@ bool Kernel::Process(const Mat &frame, nav_data_t &ndata)
 	m_navData.elev = CalculateElevation();
 	m_navData.pos  = CalculatePostion(m_navData.elev, m_navData.head);
 
+	memcpy(&ndata,&m_navData,sizeof(nav_data_t));
+
+	cout << "Heading   = " << m_navData.head << endl;
 	cout << "Elevation = " << m_navData.elev << endl;
+	cout << "Position  = " << m_navData.pos << endl;
 
 	return true;
 }
@@ -335,14 +339,11 @@ float Kernel::CalculateElevation()
 {
 	Point2f dim = m_homVert[0] - m_homVert[1];
 	float p = sqrt(dim.x*dim.x + dim.y*dim.y)/2.0;
-	float r = 1.5;//m_dim/2.0;
+	float r = m_dim/2.0;
 
 	Vec3f v;
-	Point2f c = Point2f(p+320,p+240);//Point2f(p+(m_sceneImgWidth/2.0),(p+m_sceneImgHeight/2.0));
+	Point2f c = Point2f(p+(m_sceneImgWidth/2.0),(p+m_sceneImgHeight/2.0));
 	transPixelToCamRay(m_camParams, c, v);
-
-	cout << "dim = " << m_dim << endl;
-	cout << "img = " << m_sceneImgWidth << "x" << m_sceneImgHeight << endl;
 
 	return (r*v[2])/v[0];
 }

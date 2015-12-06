@@ -10,8 +10,10 @@
 
 #include <iostream>
 #include <string>
+#include <fstream>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "proc_kernel.h"
 using namespace std;
 
@@ -45,10 +47,13 @@ typedef struct ARG_INFO
  * ------------------------------------------------------------------------- */
 
 void ParseArguments(int argc, char **argv, arg_info_t &arg_info);
+void OutputJSON(const string &path, const nav_data_t &nav_data, float fps);
 
 /* ------------------------------------------------------------------------- *
  * Define Functions.                                                         *
  * ------------------------------------------------------------------------- */
+
+/* '{"dog": 2.3, "cat": 1}' */
 
 /**
  * @brief main function
@@ -57,6 +62,8 @@ void ParseArguments(int argc, char **argv, arg_info_t &arg_info);
 int main(int argc, char **argv)
 {
 	cout << "===== fbn =====" << endl;
+	int tout, tfps;
+	float fps = 0.0;
 
 	// ------------------------------------------------------------------------
 	// initialize and parse arguments
@@ -127,7 +134,8 @@ int main(int argc, char **argv)
 	// run mainloop
 
     namedWindow("output",1);
-
+    tout = clock();
+    tfps = clock();
 	while(1)
 	{
 		Mat frame;
@@ -140,9 +148,23 @@ int main(int argc, char **argv)
 			k.DrawHomography(frame);
 		}
 
+		fps = (float)CLOCKS_PER_SEC / (float)(clock() - tfps);
+
 		imshow("output", frame);
 
 		if((cvWaitKey(1) & 0xFF) == 'q') break;
+
+		if((clock() - tout) > CLOCKS_PER_SEC)
+		{
+			cout << "-------------TICK-------------" << endl;
+			tout = clock();
+			if(!imwrite(arg_info.output_img_path, frame))
+			{
+				cout << "Error: Unable to write output image." << endl;
+				exit(1);
+			}
+			OutputJSON(arg_info.output_json_path,ndata,fps);
+		}
 	}
 
 	return 0;
@@ -285,8 +307,28 @@ void ParseArguments(int argc, char **argv, arg_info_t &arg_info)
 			arg_info.py = atof(argv[i]);
 		}
 
-
 		i++;
 	}
 }
 
+void OutputJSON(const string &path, const nav_data_t &nav_data, float fps)
+{
+	fstream file;
+
+	file.open(path.c_str(), fstream::out);
+	if(!file.is_open())
+	{
+		cout << "Error: Unable to write JSON file." << endl;
+		exit(1);
+	}
+
+	file << "{"
+		 << "\"head\": "  << nav_data.head  << ", "
+	     << "\"elev\": "  << nav_data.elev  << ", "
+	     << "\"pos_x\": " << nav_data.pos.x << ", "
+	     << "\"pos_y\": " << nav_data.pos.y << ", "
+	     << "\"fps\": "   << fps
+	     << "}";
+
+	file.close();
+}
