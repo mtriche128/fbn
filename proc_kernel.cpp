@@ -38,6 +38,7 @@ double homographyToHeading(const Mat&);
 float angleBetweenRays(const Vec3f &a, const Vec3f &b);
 void transPixelToCamRay(const cam_params_t &params, const Point2f &pix, Vec3f &ray);
 Point3f transPixelToCamPoint(const cam_params_t &params, const Point2f &pix, float z);
+Point2f centroid(const vector<Point2f> &pnt);
 
 /* ------------------------------------------------------------------------- *
  * Define Class Methods                                                      *
@@ -50,12 +51,16 @@ Point3f transPixelToCamPoint(const cam_params_t &params, const Point2f &pix, flo
  * @param cparams camecra parameters
  * @param minHess minimum Hessian
  * @param ratio   matching ratio
+ * @param dim     dimension of the target image
+ * @param pos     target image's position in world coordinates
  */
 
 Kernel::Kernel(const Mat &objImg,
 		       const cam_params_t &cparams,
-		       int minHess,
-		       float ratio)
+		       const int minHess,
+		       const float ratio,
+		       const float dim,
+		       const Point2f &pos)
 {
 	// make deep copy of camera parameters
 	m_camParams.f_x = cparams.f_x;
@@ -63,7 +68,9 @@ Kernel::Kernel(const Mat &objImg,
 	m_camParams.p_x = cparams.p_x;
 	m_camParams.p_y = cparams.p_y;
 
-	m_ratio = ratio;
+	m_ratio       = ratio;
+	m_dim         = dim;
+	m_sceneImgPos = pos;
 
 #ifndef ENABLE_GPU
 
@@ -206,7 +213,7 @@ bool Kernel::CalculateHomography()
 	if( (det <= 0.01 ) || (det > 10.0) )
 	{
 		cout << "Warning: Homography matrix isn't valid." << endl;
-		//return false;
+		return false;
 	}
 
 	cout << "perspectiveTransform()...";
@@ -271,13 +278,16 @@ bool Kernel::MatchFeatures()
 
 
 /**
- * @param frame input frame from camera
+ * @param[in]  frame input frame from camera
+ * @param[out] ndata navigation data
  *
  * @return True if the frame was successfully processed. False otherwise.
  */
 
-bool Kernel::Input(const Mat &frame)
+bool Kernel::Process(const Mat &frame, nav_data_t &ndata)
 {
+	m_sceneImgWidth  = (float)frame.cols;
+	m_sceneImgHeight = (float)frame.rows;
 	ProcessSceneImage(frame); // extract features from frame
 
 	if(!MatchFeatures())
@@ -291,7 +301,88 @@ bool Kernel::Input(const Mat &frame)
 		cout << "Warning: Unable to calculate homography." << endl;
 		return false;
 	}
+
+	m_navData.head = homographyToHeading(m_hm);
+	m_navData.elev = CalculateElevation();
+	m_navData.pos  = CalculatePostion(m_navData.elev, m_navData.head);
+
+	cout << "Elevation = " << m_navData.elev << endl;
+
 	return true;
+}
+
+/**
+ * @brief Draw homography matrix.
+ */
+
+void Kernel::DrawHomography(Mat &img)
+{
+	line(img, m_homVert[0], m_homVert[1], Scalar( 0, 255, 0), 4 );
+	line(img, m_homVert[1], m_homVert[2], Scalar( 0, 255, 0), 4 );
+	line(img, m_homVert[2], m_homVert[3], Scalar( 0, 255, 0), 4 );
+	line(img, m_homVert[3], m_homVert[0], Scalar( 0, 255, 0), 4 );
+
+	circle(img, centroid(m_homVert), 1, Scalar(0,0,255), 5);
+}
+
+/**
+ * @brief Calculate elevation above target image.
+ *
+ * @return The elevation above the target image.
+ */
+
+float Kernel::CalculateElevation()
+{
+	Point2f dim = m_homVert[0] - m_homVert[1];
+	float p = sqrt(dim.x*dim.x + dim.y*dim.y)/2.0;
+	float r = 1.5;//m_dim/2.0;
+
+	Vec3f v;
+	Point2f c = Point2f(p+320,p+240);//Point2f(p+(m_sceneImgWidth/2.0),(p+m_sceneImgHeight/2.0));
+	transPixelToCamRay(m_camParams, c, v);
+
+	cout << "dim = " << m_dim << endl;
+	cout << "img = " << m_sceneImgWidth << "x" << m_sceneImgHeight << endl;
+
+	return (r*v[2])/v[0];
+}
+
+/**
+ * @brief Calculate the position directly under the camera.
+ *
+ * @param z The distance from the camera to the target image's plane.
+ * @param h The camera's current heading.
+ *
+ * @return The position directly under the camera.
+ */
+
+Point2f Kernel::CalculatePostion(const float z, const float h)
+{
+	Point3f w0, w1, d;
+
+	w0 = transPixelToCamPoint(m_camParams, m_homVert[0], z);
+	w1 = transPixelToCamPoint(m_camParams, Point2f(640/2,480/2), z);
+	d  = w0 - w1;
+
+	Mat pos_trans(3,3,CV_32F);
+	pos_trans.at<float>(0,0) = sin(h);
+	pos_trans.at<float>(0,1) = -cos(h);
+	pos_trans.at<float>(0,2) = 0;
+	pos_trans.at<float>(1,0) = cos(h);
+	pos_trans.at<float>(1,1) = sin(h);
+	pos_trans.at<float>(1,2) = 0;
+	pos_trans.at<float>(2,0) = 0;
+	pos_trans.at<float>(2,1) = 0;
+	pos_trans.at<float>(2,2) = 1;
+
+	Mat pos(3,1,CV_32F);
+	pos.at<float>(0,0) = d.x;
+	pos.at<float>(1,0) = d.y;
+	pos.at<float>(2,0) = 1;
+
+	pos = pos_trans*pos;
+
+	return Point2f(pos.at<float>(0,0), pos.at<float>(1,0));
 }
 
 /* ------------------------------------------------------------------------- *
@@ -385,4 +476,27 @@ double homographyToHeading(const Mat &hm)
 		theda = -theda;
 
 	return theda;
+}
+
+/**
+ * @brief Calculate a centroid from descrete points.
+ *
+ * @param pnt set of points
+ */
+
+Point2f centroid(const vector<Point2f> &pnt)
+{
+	int N     = pnt.size();
+	Point2f p = Point2f(0,0);
+
+	for(int i = 0; i < N; i++)
+	{
+		p.x += pnt[i].x;
+		p.y += pnt[i].y;
+	}
+
+	p.x /= pnt.size();
+	p.y /= pnt.size();
+
+	return p;
 }

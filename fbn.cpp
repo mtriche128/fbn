@@ -116,7 +116,34 @@ int main(int argc, char **argv)
 	}
 
 	// create an initialze processing kernel
-	Kernel k(targetImg, cparams, MIN_HESS, RATIO);
+	Kernel k(targetImg,
+			cparams,
+			MIN_HESS,
+			RATIO,
+			arg_info.target_dim,
+			Point2f(arg_info.pos_x, arg_info.pos_y));
+
+	// ------------------------------------------------------------------------
+	// run mainloop
+
+    namedWindow("output",1);
+
+	while(1)
+	{
+		Mat frame;
+		nav_data_t ndata;
+
+		cap >> frame;
+
+		if(k.Process(frame,ndata))
+		{
+			k.DrawHomography(frame);
+		}
+
+		imshow("output", frame);
+
+		if((cvWaitKey(1) & 0xFF) == 'q') break;
+	}
 
 	return 0;
 }

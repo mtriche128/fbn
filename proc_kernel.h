@@ -73,17 +73,24 @@ typedef struct NAV_DATA
 class Kernel
 {
 public:
-	Kernel(const Mat&, const cam_params_t&, int, float);
+	Kernel(const Mat&,
+		   const cam_params_t&,
+		   const int,
+		   const float,
+		   const float,
+		   const Point2f&);
 	~Kernel();
 
-	bool Input(const Mat&);
-	void Output(Mat&,nav_data_t&);
+	bool Process(const Mat&,nav_data_t&);
+	void DrawHomography(Mat&);
 
 private:
 
 	void ProcessSceneImage(const Mat&);
 	bool CalculateHomography();
 	bool MatchFeatures();
+	float CalculateElevation();
+	Point2f CalculatePostion(const float, const float);
 
 	cam_params_t m_camParams;      // stores camera parameters
 	nav_data_t m_navData;          // stores current navigation data
@@ -96,6 +103,10 @@ private:
 	Mat m_sceneDesc;               // scene descriptors
 	Mat m_hm;                      // homography matrix
 	float m_ratio;                 // matching ratio
+	float m_dim;                   // target image dimension
+	float m_sceneImgWidth;         // stores scene image width
+	float m_sceneImgHeight;        // stores scene image height
+	Point2f m_sceneImgPos;         // stores scene image's position
 
 #ifndef ENABLE_GPU
 	SurfFeatureDetector *m_detector;      // extracts keypoints
